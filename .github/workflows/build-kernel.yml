@@ -15,7 +15,7 @@ jobs:
       run: |
         sudo apt update
         sudo apt install -y git ccache automake flex lzop bison gperf build-essential zip curl zlib1g-dev \
-          g++-multilib libxml2-utils bzip2 libbz2-dev libbz2-1.0 libghc-bzlib-dev squashfs-tools pngcrush \
+          g++-multilib libxml2-utils bzip2 libbz2-dev libbz2-1.0 squashfs-tools pngcrush \
           schedtool dpkg-dev liblz4-tool make optipng bc libssl-dev libelf-dev python3 python2
 
     - name: 下载并配置编译工具链 (AOSP Clang & GCC)
@@ -23,27 +23,27 @@ jobs:
         mkdir -p $GITHUB_WORKSPACE/toolchains
         cd $GITHUB_WORKSPACE/toolchains
         
-        # 克隆 AOSP Clang 12 (whyred 4.4 内核常用的稳定工具链)
-        git clone --depth=1 https://github.com/llvm-mirror/clang.git -b master clang || \
-        git clone --depth=1 https://gitlab.com/c3eru/aosp-clang.git -b clang-r383902 clang
+        # 拉取 AOSP 官方 Clang (r383902b)
+        mkdir -p clang
+        curl -LSs https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/tags/android-11.0.0_r48/clang-r383902b.tar.gz | tar -xz -C clang
         
-        # 克隆 GCC 交叉编译器 (aarch64 与 arm32)
+        # 拉取 GCC 交叉编译器
         git clone --depth=1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9.git gcc64
         git clone --depth=1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9.git gcc32
 
     - name: 拉取 whyred 内核源码
       run: |
         cd $GITHUB_WORKSPACE
-        # PixelExperience 官方 whyred 内核仓库（4.4 分支）
+        # PixelExperience 官方 whyred 内核源码
         git clone --depth=1 https://github.com/PixelExperience-Devices/kernel_xiaomi_whyred.git -b thirteen kernel
-        
+
     - name: 注入 KernelSU-Next
       run: |
         cd $GITHUB_WORKSPACE/kernel
-        # 针对 4.4 老内核，执行 KernelSU-Next 内核树注入脚本
+        # 执行 KernelSU-Next 源码树注入
         curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next
         
-        # 针对 4.4 内核，修改或确保 defconfig 启用必要项
+        # 注入必需的配置开关
         DEFCONFIG="arch/arm64/configs/whyred_defconfig"
         echo "CONFIG_KSU=y" >> $DEFCONFIG
         echo "CONFIG_KPROBES=y" >> $DEFCONFIG
@@ -62,10 +62,8 @@ jobs:
         export CROSS_COMPILE=aarch64-linux-android-
         export CROSS_COMPILE_ARM32=arm-linux-androideabi-
         
-        # 生成配置
+        # 生成配置并编译
         make O=out whyred_defconfig CC=clang
-        
-        # 开始编译
         make -j$(nproc --all) O=out \
           CC=clang \
           CLANG_TRIPLE=aarch64-linux-gnu- \
@@ -75,9 +73,9 @@ jobs:
     - name: 检查编译产物
       run: |
         if [ -f "$GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/Image.gz-dtb" ]; then
-          echo "内核二进制生成成功: Image.gz-dtb"
+          echo "内核生成成功: Image.gz-dtb"
         else
-          echo "编译失败，未找到 Image.gz-dtb"
+          echo "未检测到 Image.gz-dtb，编译失败"
           exit 1
         fi
 
@@ -90,30 +88,32 @@ jobs:
         cd AnyKernel3
         zip -r9 $GITHUB_WORKSPACE/KernelSU-Next-whyred.zip * -x .git README.md *placeholder
 
-    - name: 替换并生成最终的 boot.img
+    - name: 替换并生成最终的 boot.img (Fastboot 刷入)
       run: |
         cd $GITHUB_WORKSPACE
-        # 下载 magiskboot 二进制工具
-        wget -q https://github.com/Kitadai31/magiskboot_ndk_on_linux/releases/download/v27.0/magiskboot -O magiskboot
+        
+        # 从官方 Magisk 最新 Release 中提取原生的 x86_64 magiskboot
+        MAGISK_URL=$(curl -s https://api.github.com/repos/topjohnwu/Magisk/releases/latest | grep "browser_download_url.*Magisk.*apk" | cut -d '"' -f 4)
+        curl -L "$MAGISK_URL" -o magisk.zip
+        unzip -p magisk.zip lib/x86_64/libmagiskboot.so > magiskboot
         chmod +x magiskboot
         
-        # 准备解包目录
-        mkdir -p boot_repack && cd boot_repack
-        
-        # 如果仓库根目录下预先放了官方的 boot.img，则执行解包替换；
-        # 若未放置，则跳过 boot.img 独立生成（仍保留上面的 AnyKernel3 zip 包）。
+        # 检查是否上传了官方 boot.img 并执行内核替换
         if [ -f "$GITHUB_WORKSPACE/boot.img" ]; then
+          mkdir -p boot_repack && cd boot_repack
           cp $GITHUB_WORKSPACE/boot.img ./boot.img
+          
+          # 解包原版 boot
           ../magiskboot unpack boot.img
           
-          # 替换内核为刚刚编译出的产物
+          # 替换内核为刚刚成功编译出来的产物
           cp $GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/Image.gz-dtb ./kernel
           
-          # 重打包
+          # 重新打包
           ../magiskboot repack boot.img $GITHUB_WORKSPACE/boot-ksu.img
           echo "boot-ksu.img 打包完成"
         else
-          echo "仓库根目录未检测到原版 boot.img，将跳过生成 boot-ksu.img，仅输出 AnyKernel3 刷机包。"
+          echo "警告：仓库根目录未上传官方 boot.img，跳过打包，请使用 AnyKernel3 zip"
         fi
 
     - name: 上传构建产物
