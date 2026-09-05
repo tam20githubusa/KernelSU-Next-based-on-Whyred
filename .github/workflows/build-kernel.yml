@@ -37,12 +37,12 @@ jobs:
         # PixelExperience 官方 whyred 内核源码
         git clone --depth=1 https://github.com/PixelExperience-Devices/kernel_xiaomi_whyred.git -b thirteen kernel
 
-    - name: 注入 KernelSU-Next 并强制写入依赖配置
+    - name: 注入 KernelSU-Next 并清理冲突配置
       run: |
         cd $GITHUB_WORKSPACE/kernel
         
-        # 注入 KernelSU-Next 驱动源码
-        curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next
+        # 注入 KernelSU-Next 源码（不传 next 参数，避免 pathspec 报错）
+        curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -
         
         # 清除 defconfig 中的禁用项与冲突项
         DEFCONFIG="arch/arm64/configs/whyred_defconfig"
@@ -51,18 +51,7 @@ jobs:
         sed -i '/CONFIG_KPROBE_EVENTS/d' $DEFCONFIG
         sed -i '/CONFIG_KSU/d' $DEFCONFIG
         sed -i '/CONFIG_OVERLAY_FS/d' $DEFCONFIG
-        
-        # 预先追加完整依赖项
-        cat << 'EOF' >> $DEFCONFIG
-        CONFIG_MODULES=y
-        CONFIG_KALLSYMS=y
-        CONFIG_KALLSYMS_ALL=y
-        CONFIG_KPROBES=y
-        CONFIG_HAVE_KPROBES=y
-        CONFIG_KPROBE_EVENTS=y
-        CONFIG_OVERLAY_FS=y
-        CONFIG_KSU=y
-        EOF
+        sed -i '/CONFIG_BTFM_SLIM/d' $DEFCONFIG
 
     - name: 编译内核
       run: |
@@ -78,18 +67,19 @@ jobs:
         # 1. 生成基础配置
         make O=out whyred_defconfig CC=clang
         
-        # 2. 强制将关键项写入生效的 .config，防止被构建脚本静默重置
+        # 2. 强制开启 KSU 必要配置，同时禁用报错的 btfm_slim_wcn3990 驱动
         scripts/config --file out/.config \
-          -e CONFIG_MODULES \
           -e CONFIG_KALLSYMS \
           -e CONFIG_KALLSYMS_ALL \
           -e CONFIG_KPROBES \
           -e CONFIG_HAVE_KPROBES \
           -e CONFIG_KPROBE_EVENTS \
           -e CONFIG_OVERLAY_FS \
-          -e CONFIG_KSU
+          -e CONFIG_KSU \
+          -d CONFIG_BTFM_SLIM \
+          -d CONFIG_BTFM_SLIM_WCN3990
         
-        # 3. 补全依赖并执行编译
+        # 3. 补全依赖并开始编译
         make O=out olddefconfig CC=clang
         make -j$(nproc --all) O=out \
           CC=clang \
