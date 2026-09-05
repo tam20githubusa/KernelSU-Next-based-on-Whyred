@@ -92,22 +92,10 @@ jobs:
       run: |
         cd $GITHUB_WORKSPACE
         
-        # 使用上一步 AnyKernel3 仓库内置的静态 magiskboot 工具，完全不依赖外网下载
-        MAGISKBOOT="$GITHUB_WORKSPACE/AnyKernel3/tools/magiskboot"
-        chmod +x "$MAGISKBOOT"
-        
         if [ -f "$GITHUB_WORKSPACE/boot.img" ]; then
-          mkdir -p boot_repack && cd boot_repack
-          cp "$GITHUB_WORKSPACE/boot.img" ./boot.img
-          
-          # 解包原版 boot
-          "$MAGISKBOOT" unpack boot.img
-          
-          # 替换内核二进制
-          cp "$GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/Image.gz-dtb" ./kernel
-          
-          # 重新打包为 boot-ksu.img
-          "$MAGISKBOOT" repack boot.img "$GITHUB_WORKSPACE/boot-ksu.img"
+          # 使用 Ubuntu 原生工具 abootimg 直接更新内核，无需外部二进制或网络拉取
+          cp "$GITHUB_WORKSPACE/boot.img" "$GITHUB_WORKSPACE/boot-ksu.img"
+          abootimg -u "$GITHUB_WORKSPACE/boot-ksu.img" -k "$GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/Image.gz-dtb"
           echo "boot-ksu.img 打包完成"
         else
           echo "提示：仓库根目录未上传官方 boot.img，请直接使用 AnyKernel3 zip 刷机包"
