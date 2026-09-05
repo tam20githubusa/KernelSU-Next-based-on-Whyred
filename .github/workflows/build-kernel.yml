@@ -16,7 +16,7 @@ jobs:
         sudo apt update
         sudo apt install -y git ccache automake flex lzop bison gperf build-essential zip curl zlib1g-dev \
           g++-multilib libxml2-utils bzip2 libbz2-dev libbz2-1.0 squashfs-tools pngcrush \
-          schedtool dpkg-dev liblz4-tool make optipng bc libssl-dev libelf-dev python3 python2
+          schedtool dpkg-dev liblz4-tool make optipng bc libssl-dev libelf-dev python3 python2 abootimg
 
     - name: 下载并配置编译工具链 (AOSP Clang & GCC)
       run: |
@@ -92,28 +92,25 @@ jobs:
       run: |
         cd $GITHUB_WORKSPACE
         
-        # 从官方 Magisk 最新 Release 中提取原生的 x86_64 magiskboot
-        MAGISK_URL=$(curl -s https://api.github.com/repos/topjohnwu/Magisk/releases/latest | grep "browser_download_url.*Magisk.*apk" | cut -d '"' -f 4)
-        curl -L "$MAGISK_URL" -o magisk.zip
-        unzip -p magisk.zip lib/x86_64/libmagiskboot.so > magiskboot
-        chmod +x magiskboot
+        # 使用上一步 AnyKernel3 仓库内置的静态 magiskboot 工具，完全不依赖外网下载
+        MAGISKBOOT="$GITHUB_WORKSPACE/AnyKernel3/tools/magiskboot"
+        chmod +x "$MAGISKBOOT"
         
-        # 检查是否上传了官方 boot.img 并执行内核替换
         if [ -f "$GITHUB_WORKSPACE/boot.img" ]; then
           mkdir -p boot_repack && cd boot_repack
-          cp $GITHUB_WORKSPACE/boot.img ./boot.img
+          cp "$GITHUB_WORKSPACE/boot.img" ./boot.img
           
           # 解包原版 boot
-          ../magiskboot unpack boot.img
+          "$MAGISKBOOT" unpack boot.img
           
-          # 替换内核为刚刚成功编译出来的产物
-          cp $GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/Image.gz-dtb ./kernel
+          # 替换内核二进制
+          cp "$GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/Image.gz-dtb" ./kernel
           
-          # 重新打包
-          ../magiskboot repack boot.img $GITHUB_WORKSPACE/boot-ksu.img
+          # 重新打包为 boot-ksu.img
+          "$MAGISKBOOT" repack boot.img "$GITHUB_WORKSPACE/boot-ksu.img"
           echo "boot-ksu.img 打包完成"
         else
-          echo "警告：仓库根目录未上传官方 boot.img，跳过打包，请使用 AnyKernel3 zip"
+          echo "提示：仓库根目录未上传官方 boot.img，请直接使用 AnyKernel3 zip 刷机包"
         fi
 
     - name: 上传构建产物
