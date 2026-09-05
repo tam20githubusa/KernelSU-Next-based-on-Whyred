@@ -37,21 +37,30 @@ jobs:
         # PixelExperience 官方 whyred 内核源码
         git clone --depth=1 https://github.com/PixelExperience-Devices/kernel_xiaomi_whyred.git -b thirteen kernel
 
-    - name: 注入 KernelSU-Next 并清理冲突配置
+    - name: 注入 KernelSU-Next 并配置 kprobes
       run: |
         cd $GITHUB_WORKSPACE/kernel
         
-        # 注入 KernelSU-Next 源码（不传 next 参数，避免 pathspec 报错）
+        # 1. 注入 KernelSU-Next 源码
         curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -
         
-        # 清除 defconfig 中的禁用项与冲突项
+        # 2. 避免将警告当成错误中止编译（高通旧驱动 Clang 适配必备）
+        sed -i 's/-Werror//g' Makefile
+        sed -i 's/-Werror//g' arch/arm64/Makefile
+        
+        # 3. 针对 defconfig，仅替换/追加 KSU 与 KPROBES 项
         DEFCONFIG="arch/arm64/configs/whyred_defconfig"
         sed -i '/CONFIG_KPROBES/d' $DEFCONFIG
         sed -i '/CONFIG_HAVE_KPROBES/d' $DEFCONFIG
         sed -i '/CONFIG_KPROBE_EVENTS/d' $DEFCONFIG
         sed -i '/CONFIG_KSU/d' $DEFCONFIG
-        sed -i '/CONFIG_OVERLAY_FS/d' $DEFCONFIG
-        sed -i '/CONFIG_BTFM_SLIM/d' $DEFCONFIG
+        
+        cat << 'EOF' >> $DEFCONFIG
+        CONFIG_KPROBES=y
+        CONFIG_HAVE_KPROBES=y
+        CONFIG_KPROBE_EVENTS=y
+        CONFIG_KSU=y
+        EOF
 
     - name: 编译内核
       run: |
@@ -64,23 +73,17 @@ jobs:
         export CROSS_COMPILE=aarch64-linux-android-
         export CROSS_COMPILE_ARM32=arm-linux-androideabi-
         
-        # 1. 生成基础配置
+        # 1. 生成基础配置（保持官方原生配置，不执行 olddefconfig 避免激活冲突驱动）
         make O=out whyred_defconfig CC=clang
         
-        # 2. 强制开启 KSU 必要配置，同时禁用报错的 btfm_slim_wcn3990 驱动
+        # 2. 确保开关在 .config 中处于激活状态
         scripts/config --file out/.config \
-          -e CONFIG_KALLSYMS \
-          -e CONFIG_KALLSYMS_ALL \
           -e CONFIG_KPROBES \
           -e CONFIG_HAVE_KPROBES \
           -e CONFIG_KPROBE_EVENTS \
-          -e CONFIG_OVERLAY_FS \
-          -e CONFIG_KSU \
-          -d CONFIG_BTFM_SLIM \
-          -d CONFIG_BTFM_SLIM_WCN3990
+          -e CONFIG_KSU
         
-        # 3. 补全依赖并开始编译
-        make O=out olddefconfig CC=clang
+        # 3. 开始编译
         make -j$(nproc --all) O=out \
           CC=clang \
           CLANG_TRIPLE=aarch64-linux-gnu- \
