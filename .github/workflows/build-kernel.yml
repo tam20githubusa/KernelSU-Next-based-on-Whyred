@@ -1,4 +1,4 @@
-name: Build KernelSU-Next Kprobes Force for whyred
+name: Build KernelSU-Next Debug whyred
 
 on:
   workflow_dispatch:
@@ -37,32 +37,48 @@ jobs:
         # PixelExperience 官方 whyred 内核源码
         git clone --depth=1 https://github.com/PixelExperience-Devices/kernel_xiaomi_whyred.git -b thirteen kernel
 
-    - name: 注入 KernelSU-Next 并强制打通 4.4 内核 Kprobes
+    - name: 注入 KernelSU-Next 并强制硬编码挂载
       run: |
         cd $GITHUB_WORKSPACE/kernel
         
-        # 1. 注入 KernelSU-Next 源码
+        # 1. 运行官方 setup.sh 脚本
         curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -
         
-        # 2. 强制修改 arm64 架构配置树，把 HAVE_KPROBES 锁定写入，防止被抹除
-        sed -i '/select HAVE_ARCH_BITREVERSE/select HAVE_ARCH_BITREVERSE\n\tselect HAVE_KPROBES\n\tselect HAVE_KRETPROBES/g' arch/arm64/Kconfig || true
+        # 2. 如果是软链接，将其转换为真实的物理目录或直接克隆克隆硬编码，确保编译系统100%抓到
+        if [ -L drivers/kernelsu ]; then
+          rm -rf drivers/kernelsu
+          git clone --depth=1 https://github.com/KernelSU-Next/KernelSU-Next.git -b next drivers/kernelsu
+        fi
         
-        # 3. 往 whyred_defconfig 注入硬性开关
+        # 3. 显式写入 drivers/Makefile 和 drivers/Kconfig 确保硬编码生效
+        if ! grep -q "kernelsu" drivers/Makefile; then
+          echo "obj-\$(CONFIG_KSU) += kernelsu/" >> drivers/Makefile
+        fi
+        
+        if ! grep -q "kernelsu" drivers/Kconfig; then
+          sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
+        fi
+        
+        # 4. 配置 defconfig
         DEFCONFIG="arch/arm64/configs/whyred_defconfig"
-        sed -i '/CONFIG_KPROBES/d' $DEFCONFIG
-        sed -i '/CONFIG_HAVE_KPROBES/d' $DEFCONFIG
-        sed -i '/CONFIG_KPROBE_EVENTS/d' $DEFCONFIG
-        sed -i '/CONFIG_OVERLAY_FS/d' $DEFCONFIG
         sed -i '/CONFIG_KSU/d' $DEFCONFIG
+        sed -i '/CONFIG_OVERLAY_FS/d' $DEFCONFIG
+        echo "CONFIG_KSU=y" >> $DEFCONFIG
+        echo "CONFIG_OVERLAY_FS=y" >> $DEFCONFIG
+
+    - name: 检查 drivers 目录确认 KSU 是否存在
+      run: |
+        cd $GITHUB_WORKSPACE/kernel
+        echo "=== 检查 drivers 目录下的文件 ==="
+        ls -la drivers/
         
-        cat << 'EOF' >> $DEFCONFIG
-        CONFIG_KPROBES=y
-        CONFIG_HAVE_KPROBES=y
-        CONFIG_HAVE_KRETPROBES=y
-        CONFIG_KPROBE_EVENTS=y
-        CONFIG_OVERLAY_FS=y
-        CONFIG_KSU=y
-        EOF
+        if [ -e drivers/kernelsu ] || [ -e drivers/ksu ]; then
+          echo "SUCCESS: 检测到 KSU 驱动目录存在！"
+          ls -la drivers/kernelsu || ls -la drivers/ksu
+        else
+          echo "ERROR: 未在 drivers 目录下发现 KSU 驱动！"
+          exit 1
+        fi
 
     - name: 编译内核
       run: |
@@ -78,19 +94,10 @@ jobs:
         # 1. 生成基础配置
         make O=out whyred_defconfig CC=clang
         
-        # 2. 显式在生成的 .config 中强行勾选 Kprobes 驱动链
-        scripts/config --file out/.config \
-          -e CONFIG_KPROBES \
-          -e CONFIG_HAVE_KPROBES \
-          -e CONFIG_HAVE_KRETPROBES \
-          -e CONFIG_KPROBE_EVENTS \
-          -e CONFIG_OVERLAY_FS \
-          -e CONFIG_KSU
-          
-        # 3. 固化旧配置依赖
-        make O=out olddefconfig CC=clang
+        # 2. 显式在生成的 .config 中强行勾选开关
+        scripts/config --file out/.config -e CONFIG_KSU -e CONFIG_OVERLAY_FS
         
-        # 4. 开始多线程编译（带上 KCFLAGS 忽略旧驱动非致命警告）
+        # 3. 开始多线程编译
         make -j$(nproc --all) O=out \
           CC=clang \
           CLANG_TRIPLE=aarch64-linux-gnu- \
