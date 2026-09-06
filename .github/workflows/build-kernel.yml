@@ -34,24 +34,30 @@ jobs:
         cd $GITHUB_WORKSPACE
         git clone --depth=1 https://github.com/PixelExperience-Devices/kernel_xiaomi_whyred.git -b thirteen kernel
 
-    - name: 使用官方 setup.sh 部署 KernelSU-Next 并全局修复蓝牙头文件
+    - name: 部署 KernelSU-Next 并修复所有 Clang 兼容性补丁
       run: |
         cd $GITHUB_WORKSPACE/kernel
         
         # 1. 运行官方设置脚本注入驱动
         curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -
         
-        # 2. 批量将 drivers/bluetooth 目录下的尖括号引用替换为双引号
+        # 2. 修复蓝牙驱动头文件尖括号报错
         find drivers/bluetooth/ -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i 's/<\(btfm_.*\.h\)>/"\1"/g' {} +
         
-        # 3. 写入 defconfig 基础配置
+        # 3. 修复 GPU kgsl_trace.h 相对路径包含报错
+        if [ -f "drivers/gpu/msm/kgsl_trace.h" ]; then
+          sed -i 's|#include "./kgsl_trace.h"|#include "kgsl_trace.h"|g' drivers/gpu/msm/kgsl_trace.h
+          sed -i 's|#include "./drivers/gpu/msm/kgsl_trace.h"|#include "kgsl_trace.h"|g' drivers/gpu/msm/kgsl_trace.h
+        fi
+        
+        # 4. 写入 defconfig 基础配置
         DEFCONFIG="arch/arm64/configs/whyred_defconfig"
         sed -i '/CONFIG_KSU/d' $DEFCONFIG
         sed -i '/CONFIG_OVERLAY_FS/d' $DEFCONFIG
         echo "CONFIG_KSU=y" >> $DEFCONFIG
         echo "CONFIG_OVERLAY_FS=y" >> $DEFCONFIG
 
-    - name: 原位编译内核 (单线程排错模式)
+    - name: 原位编译内核 (恢复多线程加速)
       run: |
         cd $GITHUB_WORKSPACE/kernel
         
@@ -73,8 +79,8 @@ jobs:
         scripts/config --file .config -e CONFIG_KSU -e CONFIG_OVERLAY_FS
         make olddefconfig CC=clang
         
-        # 4. 改用单线程编译 (-j1)，让错误日志精准暴露
-        make -j1 \
+        # 4. 恢复多线程并行编译
+        make -j$(nproc --all) \
           CC=clang \
           CLANG_TRIPLE=aarch64-linux-gnu- \
           CROSS_COMPILE=aarch64-linux-android- \
