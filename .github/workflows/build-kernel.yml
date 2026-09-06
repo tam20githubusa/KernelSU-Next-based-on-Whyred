@@ -58,7 +58,7 @@ jobs:
         echo "CONFIG_KSU=y" >> $DEFCONFIG
         echo "CONFIG_OVERLAY_FS=y" >> $DEFCONFIG
 
-    - name: 原位编译内核
+    - name: 原位编译内核 (单线程精准排错模式)
       run: |
         cd $GITHUB_WORKSPACE/kernel
         
@@ -80,8 +80,8 @@ jobs:
         scripts/config --file .config -e CONFIG_KSU -e CONFIG_OVERLAY_FS
         make olddefconfig CC=clang
         
-        # 4. 执行多线程编译（修正 KCFLAGS 参数，只保留 -Wno-error）
-        make -j$(nproc --all) \
+        # 4. 临时使用单线程 -j1 运行，确保最后的错误能清晰展示
+        make -j1 \
           CC=clang \
           CLANG_TRIPLE=aarch64-linux-gnu- \
           CROSS_COMPILE=aarch64-linux-android- \
