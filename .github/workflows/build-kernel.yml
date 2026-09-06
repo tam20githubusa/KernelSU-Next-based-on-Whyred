@@ -1,4 +1,4 @@
-name: Build KernelSU-Next Final for whyred
+name: Build KernelSU-Next with boot.img for whyred
 
 on:
   workflow_dispatch:
@@ -38,7 +38,7 @@ jobs:
       run: |
         cd $GITHUB_WORKSPACE/kernel
         
-        # 运行官方设置脚本，它会自动配置好 drivers/kernelsu 软链及 Makefile 规则
+        # 运行官方设置脚本
         curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -
         
         # 写入 defconfig 基础配置
@@ -82,7 +82,7 @@ jobs:
           exit 1
         fi
 
-    - name: 打包为 AnyKernel3 刷机包 (推荐)
+    - name: 打包为 AnyKernel3 刷机包
       run: |
         cd $GITHUB_WORKSPACE
         git clone https://github.com/osm0sis/AnyKernel3.git AnyKernel3
@@ -91,9 +91,21 @@ jobs:
         cd AnyKernel3
         zip -r9 $GITHUB_WORKSPACE/KernelSU-Next-whyred.zip * -x .git README.md *placeholder
 
+    - name: 生成 boot-ksu.img (Fastboot 刷入)
+      run: |
+        cd $GITHUB_WORKSPACE
+        if [ -f "$GITHUB_WORKSPACE/boot.img" ]; then
+          cp "$GITHUB_WORKSPACE/boot.img" "$GITHUB_WORKSPACE/boot-ksu.img"
+          abootimg -u "$GITHUB_WORKSPACE/boot-ksu.img" -k "$GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/Image.gz-dtb"
+          echo "boot-ksu.img 打包完成"
+        else
+          echo "提示：仓库根目录未上传官方 boot.img，跳过 boot-ksu.img 生成"
+        fi
+
     - name: 上传构建产物
       uses: actions/upload-artifact@v4
       with:
         name: whyred-KernelSU-Next-Output
         path: |
           KernelSU-Next-whyred.zip
+          boot-ksu.img
