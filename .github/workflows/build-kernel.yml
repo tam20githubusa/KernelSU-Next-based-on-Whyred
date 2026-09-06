@@ -1,4 +1,4 @@
-name: Build KernelSU-Next with boot.img for whyred
+name: Build KernelSU-Next In-Tree for whyred
 
 on:
   workflow_dispatch:
@@ -38,7 +38,7 @@ jobs:
       run: |
         cd $GITHUB_WORKSPACE/kernel
         
-        # 运行官方设置脚本
+        # 运行官方设置脚本注入驱动
         curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -
         
         # 写入 defconfig 基础配置
@@ -48,7 +48,7 @@ jobs:
         echo "CONFIG_KSU=y" >> $DEFCONFIG
         echo "CONFIG_OVERLAY_FS=y" >> $DEFCONFIG
 
-    - name: 编译内核
+    - name: 原位编译内核 (不使用 O=out 隔离)
       run: |
         cd $GITHUB_WORKSPACE/kernel
         
@@ -59,14 +59,19 @@ jobs:
         export CROSS_COMPILE=aarch64-linux-android-
         export CROSS_COMPILE_ARM32=arm-linux-androideabi-
         
-        make O=out whyred_defconfig CC=clang
+        # 1. 清理旧缓存
+        make clean
+        make mrproper
         
-        # 确保配置绝对写入
-        scripts/config --file out/.config -e CONFIG_KSU -e CONFIG_OVERLAY_FS
-        make O=out olddefconfig CC=clang
+        # 2. 生成默认配置
+        make whyred_defconfig CC=clang
         
-        # 多线程编译
-        make -j$(nproc --all) O=out \
+        # 3. 强制在根目录 .config 中开启开关
+        scripts/config --file .config -e CONFIG_KSU -e CONFIG_OVERLAY_FS
+        make olddefconfig CC=clang
+        
+        # 4. 执行原位多线程编译
+        make -j$(nproc --all) \
           CC=clang \
           CLANG_TRIPLE=aarch64-linux-gnu- \
           CROSS_COMPILE=aarch64-linux-android- \
@@ -75,7 +80,7 @@ jobs:
 
     - name: 检查编译产物
       run: |
-        if [ -f "$GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/Image.gz-dtb" ]; then
+        if [ -f "$GITHUB_WORKSPACE/kernel/arch/arm64/boot/Image.gz-dtb" ]; then
           echo "内核生成成功: Image.gz-dtb"
         else
           echo "未检测到 Image.gz-dtb，编译失败"
@@ -87,7 +92,7 @@ jobs:
         cd $GITHUB_WORKSPACE
         git clone https://github.com/osm0sis/AnyKernel3.git AnyKernel3
         sed -i 's/do.devicecheck=1/do.devicecheck=0/g' AnyKernel3/anykernel.sh
-        cp $GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/Image.gz-dtb AnyKernel3/
+        cp $GITHUB_WORKSPACE/kernel/arch/arm64/boot/Image.gz-dtb AnyKernel3/
         cd AnyKernel3
         zip -r9 $GITHUB_WORKSPACE/KernelSU-Next-whyred.zip * -x .git README.md *placeholder
 
@@ -96,7 +101,7 @@ jobs:
         cd $GITHUB_WORKSPACE
         if [ -f "$GITHUB_WORKSPACE/boot.img" ]; then
           cp "$GITHUB_WORKSPACE/boot.img" "$GITHUB_WORKSPACE/boot-ksu.img"
-          abootimg -u "$GITHUB_WORKSPACE/boot-ksu.img" -k "$GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/Image.gz-dtb"
+          abootimg -u "$GITHUB_WORKSPACE/boot-ksu.img" -k "$GITHUB_WORKSPACE/kernel/arch/arm64/boot/Image.gz-dtb"
           echo "boot-ksu.img 打包完成"
         else
           echo "提示：仓库根目录未上传官方 boot.img，跳过 boot-ksu.img 生成"
