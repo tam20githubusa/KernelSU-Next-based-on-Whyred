@@ -48,7 +48,6 @@ jobs:
         if [ -f "drivers/gpu/msm/kgsl_trace.h" ]; then
           sed -i 's|#include "./kgsl_trace.h"|#include "kgsl_trace.h"|g' drivers/gpu/msm/kgsl_trace.h
           sed -i 's|#include "./drivers/gpu/msm/kgsl_trace.h"|#include "kgsl_trace.h"|g' drivers/gpu/msm/kgsl_trace.h
-          # 修正 TRACE_INCLUDE_PATH 宏定义，使其适配 Clang
           sed -i 's|#define TRACE_INCLUDE_PATH .|#define TRACE_INCLUDE_PATH drivers/gpu/msm|g' drivers/gpu/msm/kgsl_trace.h
         fi
         
@@ -81,13 +80,13 @@ jobs:
         scripts/config --file .config -e CONFIG_KSU -e CONFIG_OVERLAY_FS
         make olddefconfig CC=clang
         
-        # 4. 执行多线程编译，加入额外参数屏蔽兼容性警告引起的中断
+        # 4. 执行多线程编译（修正 KCFLAGS 参数，只保留 -Wno-error）
         make -j$(nproc --all) \
           CC=clang \
           CLANG_TRIPLE=aarch64-linux-gnu- \
           CROSS_COMPILE=aarch64-linux-android- \
           CROSS_COMPILE_ARM32=arm-linux-androideabi- \
-          KCFLAGS="-Wno-error -Wno-backslash-escapes"
+          KCFLAGS="-Wno-error"
 
     - name: 检查编译产物
       run: |
