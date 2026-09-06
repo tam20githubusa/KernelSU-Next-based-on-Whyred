@@ -37,17 +37,18 @@ jobs:
         # PixelExperience 官方 whyred 内核源码
         git clone --depth=1 https://github.com/PixelExperience-Devices/kernel_xiaomi_whyred.git -b thirteen kernel
 
-    - name: 注入 KernelSU-Next 并强制硬编码挂载
+    - name: 注入 KernelSU-Next 并安全转换软链接
       run: |
         cd $GITHUB_WORKSPACE/kernel
         
         # 1. 运行官方 setup.sh 脚本
         curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -
         
-        # 2. 如果是软链接，将其转换为真实的物理目录或直接克隆克隆硬编码，确保编译系统100%抓到
+        # 2. 如果 drivers/kernelsu 是软链接，将其内容实体化复制为真实物理目录
         if [ -L drivers/kernelsu ]; then
-          rm -rf drivers/kernelsu
-          git clone --depth=1 https://github.com/KernelSU-Next/KernelSU-Next.git -b next drivers/kernelsu
+          REAL_PATH=$(readlink -f drivers/kernelsu)
+          rm -f drivers/kernelsu
+          cp -r "$REAL_PATH" drivers/kernelsu
         fi
         
         # 3. 显式写入 drivers/Makefile 和 drivers/Kconfig 确保硬编码生效
