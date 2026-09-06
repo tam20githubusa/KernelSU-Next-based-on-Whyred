@@ -34,14 +34,22 @@ jobs:
         cd $GITHUB_WORKSPACE
         git clone --depth=1 https://github.com/PixelExperience-Devices/kernel_xiaomi_whyred.git -b thirteen kernel
 
-    - name: 使用官方 setup.sh 部署 KernelSU-Next
+    - name: 使用官方 setup.sh 部署 KernelSU-Next 并修复蓝牙头文件
       run: |
         cd $GITHUB_WORKSPACE/kernel
         
-        # 运行官方设置脚本注入驱动
+        # 1. 运行官方设置脚本注入驱动
         curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -
         
-        # 写入 defconfig 基础配置
+        # 2. 修复 Clang 编译蓝牙驱动时的尖括号头文件路径报错
+        if [ -f "drivers/bluetooth/btfm_slim.c" ]; then
+          sed -i 's|<btfm_slim.h>|"btfm_slim.h"|g' drivers/bluetooth/btfm_slim.c
+        fi
+        if [ -f "drivers/bluetooth/btfm_slim_wcn3990.h" ]; then
+          sed -i 's|<btfm_slim.h>|"btfm_slim.h"|g' drivers/bluetooth/btfm_slim_wcn3990.h
+        fi
+        
+        # 3. 写入 defconfig 基础配置
         DEFCONFIG="arch/arm64/configs/whyred_defconfig"
         sed -i '/CONFIG_KSU/d' $DEFCONFIG
         sed -i '/CONFIG_OVERLAY_FS/d' $DEFCONFIG
