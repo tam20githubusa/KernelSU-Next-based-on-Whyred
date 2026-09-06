@@ -51,7 +51,7 @@ jobs:
         echo "CONFIG_KSU=y" >> $DEFCONFIG
         echo "CONFIG_OVERLAY_FS=y" >> $DEFCONFIG
 
-    - name: 原位编译内核 (不使用 O=out 隔离)
+    - name: 原位编译内核 (单线程排错模式)
       run: |
         cd $GITHUB_WORKSPACE/kernel
         
@@ -73,8 +73,8 @@ jobs:
         scripts/config --file .config -e CONFIG_KSU -e CONFIG_OVERLAY_FS
         make olddefconfig CC=clang
         
-        # 4. 执行原位多线程编译
-        make -j$(nproc --all) \
+        # 4. 改用单线程编译 (-j1)，让错误日志精准暴露
+        make -j1 \
           CC=clang \
           CLANG_TRIPLE=aarch64-linux-gnu- \
           CROSS_COMPILE=aarch64-linux-android- \
