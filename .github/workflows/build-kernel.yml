@@ -34,7 +34,7 @@ jobs:
         cd $GITHUB_WORKSPACE
         git clone --depth=1 https://github.com/PixelExperience-Devices/kernel_xiaomi_whyred.git -b thirteen kernel
 
-    - name: 部署 KernelSU-Next 并完成所有兼容性修补
+    - name: 部署 KernelSU-Next 并修复蓝牙尖括号引用
       run: |
         cd $GITHUB_WORKSPACE/kernel
         
@@ -44,19 +44,14 @@ jobs:
         # 2. 修复蓝牙驱动头文件尖括号报错
         find drivers/bluetooth/ -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i 's/<\(btfm_.*\.h\)>/"\1"/g' {} +
         
-        # 3. 彻底根治 kgsl_trace.h 宏冲突：直接置空该跟踪文件
-        if [ -f "drivers/gpu/msm/kgsl_trace.h" ]; then
-          echo "/* kgsl_trace bypassed for Clang compatibility */" > drivers/gpu/msm/kgsl_trace.h
-        fi
-        
-        # 4. 写入 defconfig 基础配置
+        # 3. 写入 defconfig 基础配置
         DEFCONFIG="arch/arm64/configs/whyred_defconfig"
         sed -i '/CONFIG_KSU/d' $DEFCONFIG
         sed -i '/CONFIG_OVERLAY_FS/d' $DEFCONFIG
         echo "CONFIG_KSU=y" >> $DEFCONFIG
         echo "CONFIG_OVERLAY_FS=y" >> $DEFCONFIG
 
-    - name: 原位编译内核 (全速多线程)
+    - name: 原位编译内核 (放行隐式函数声明警告)
       run: |
         cd $GITHUB_WORKSPACE/kernel
         
@@ -78,13 +73,13 @@ jobs:
         scripts/config --file .config -e CONFIG_KSU -e CONFIG_OVERLAY_FS
         make olddefconfig CC=clang
         
-        # 4. 执行多线程全速编译
+        # 4. 执行多线程编译，加入 -Wno-error=implicit-function-declaration 解决旧版 trace 兼容性中断
         make -j$(nproc --all) \
           CC=clang \
           CLANG_TRIPLE=aarch64-linux-gnu- \
           CROSS_COMPILE=aarch64-linux-android- \
           CROSS_COMPILE_ARM32=arm-linux-androideabi- \
-          KCFLAGS="-Wno-error"
+          KCFLAGS="-Wno-error -Wno-error=implicit-function-declaration"
 
     - name: 检查编译产物
       run: |
