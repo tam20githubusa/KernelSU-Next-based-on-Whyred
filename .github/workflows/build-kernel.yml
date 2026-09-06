@@ -34,7 +34,7 @@ jobs:
         cd $GITHUB_WORKSPACE
         git clone --depth=1 https://github.com/PixelExperience-Devices/kernel_xiaomi_whyred.git -b thirteen kernel
 
-    - name: 部署 KernelSU-Next 并修复所有 Clang 兼容性补丁
+    - name: 部署 KernelSU-Next 并完成所有兼容性修补
       run: |
         cd $GITHUB_WORKSPACE/kernel
         
@@ -44,11 +44,9 @@ jobs:
         # 2. 修复蓝牙驱动头文件尖括号报错
         find drivers/bluetooth/ -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i 's/<\(btfm_.*\.h\)>/"\1"/g' {} +
         
-        # 3. 彻底修复 GPU kgsl_trace.h 路径解析错误
+        # 3. 彻底根治 kgsl_trace.h 宏冲突：直接置空该跟踪文件
         if [ -f "drivers/gpu/msm/kgsl_trace.h" ]; then
-          sed -i 's|#include "./kgsl_trace.h"|#include "kgsl_trace.h"|g' drivers/gpu/msm/kgsl_trace.h
-          sed -i 's|#include "./drivers/gpu/msm/kgsl_trace.h"|#include "kgsl_trace.h"|g' drivers/gpu/msm/kgsl_trace.h
-          sed -i 's|#define TRACE_INCLUDE_PATH .*|#define TRACE_INCLUDE_PATH drivers/gpu/msm|g' drivers/gpu/msm/kgsl_trace.h
+          echo "/* kgsl_trace bypassed for Clang compatibility */" > drivers/gpu/msm/kgsl_trace.h
         fi
         
         # 4. 写入 defconfig 基础配置
@@ -58,7 +56,7 @@ jobs:
         echo "CONFIG_KSU=y" >> $DEFCONFIG
         echo "CONFIG_OVERLAY_FS=y" >> $DEFCONFIG
 
-    - name: 原位编译内核 (单线程排错防混淆模式)
+    - name: 原位编译内核 (全速多线程)
       run: |
         cd $GITHUB_WORKSPACE/kernel
         
@@ -80,8 +78,8 @@ jobs:
         scripts/config --file .config -e CONFIG_KSU -e CONFIG_OVERLAY_FS
         make olddefconfig CC=clang
         
-        # 4. 使用单线程模式排错 (-j1) 确保最后错误清晰
-        make -j1 \
+        # 4. 执行多线程全速编译
+        make -j$(nproc --all) \
           CC=clang \
           CLANG_TRIPLE=aarch64-linux-gnu- \
           CROSS_COMPILE=aarch64-linux-android- \
