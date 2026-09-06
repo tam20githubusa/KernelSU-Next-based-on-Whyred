@@ -1,4 +1,4 @@
-name: Build KernelSU-Next Debug whyred
+name: Build KernelSU-Next Final for whyred
 
 on:
   workflow_dispatch:
@@ -23,63 +23,41 @@ jobs:
         mkdir -p $GITHUB_WORKSPACE/toolchains
         cd $GITHUB_WORKSPACE/toolchains
         
-        # 拉取 AOSP 官方 Clang (r383902b)
         mkdir -p clang
         curl -LSs https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/tags/android-11.0.0_r48/clang-r383902b.tar.gz | tar -xz -C clang
         
-        # 拉取 GCC 交叉编译器
         git clone --depth=1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9.git gcc64
         git clone --depth=1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9.git gcc32
 
     - name: 拉取 whyred 内核源码
       run: |
         cd $GITHUB_WORKSPACE
-        # PixelExperience 官方 whyred 内核源码
         git clone --depth=1 https://github.com/PixelExperience-Devices/kernel_xiaomi_whyred.git -b thirteen kernel
 
-    - name: 注入 KernelSU-Next 并安全转换软链接
+    - name: 强行直接克隆 KernelSU-Next 到 drivers 目录
       run: |
         cd $GITHUB_WORKSPACE/kernel
         
-        # 1. 运行官方 setup.sh 脚本
-        curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -
+        # 1. 移除旧目录并直接克隆源码
+        rm -rf drivers/kernelsu
+        git clone --depth=1 https://github.com/KernelSU-Next/KernelSU-Next.git drivers/kernelsu
         
-        # 2. 如果 drivers/kernelsu 是软链接，将其内容实体化复制为真实物理目录
-        if [ -L drivers/kernelsu ]; then
-          REAL_PATH=$(readlink -f drivers/kernelsu)
-          rm -f drivers/kernelsu
-          cp -r "$REAL_PATH" drivers/kernelsu
-        fi
-        
-        # 3. 显式写入 drivers/Makefile 和 drivers/Kconfig 确保硬编码生效
+        # 2. 强制写入 Makefile 编译规则
         if ! grep -q "kernelsu" drivers/Makefile; then
-          echo "obj-\$(CONFIG_KSU) += kernelsu/" >> drivers/Makefile
+          echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
         fi
         
+        # 3. 强制写入 Kconfig 引导
         if ! grep -q "kernelsu" drivers/Kconfig; then
           sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
         fi
         
-        # 4. 配置 defconfig
+        # 4. 强行写入 defconfig 开关
         DEFCONFIG="arch/arm64/configs/whyred_defconfig"
         sed -i '/CONFIG_KSU/d' $DEFCONFIG
         sed -i '/CONFIG_OVERLAY_FS/d' $DEFCONFIG
         echo "CONFIG_KSU=y" >> $DEFCONFIG
         echo "CONFIG_OVERLAY_FS=y" >> $DEFCONFIG
-
-    - name: 检查 drivers 目录确认 KSU 是否存在
-      run: |
-        cd $GITHUB_WORKSPACE/kernel
-        echo "=== 检查 drivers 目录下的文件 ==="
-        ls -la drivers/
-        
-        if [ -e drivers/kernelsu ] || [ -e drivers/ksu ]; then
-          echo "SUCCESS: 检测到 KSU 驱动目录存在！"
-          ls -la drivers/kernelsu || ls -la drivers/ksu
-        else
-          echo "ERROR: 未在 drivers 目录下发现 KSU 驱动！"
-          exit 1
-        fi
 
     - name: 编译内核
       run: |
@@ -92,13 +70,13 @@ jobs:
         export CROSS_COMPILE=aarch64-linux-android-
         export CROSS_COMPILE_ARM32=arm-linux-androideabi-
         
-        # 1. 生成基础配置
         make O=out whyred_defconfig CC=clang
         
-        # 2. 显式在生成的 .config 中强行勾选开关
+        # 确保配置绝对写入
         scripts/config --file out/.config -e CONFIG_KSU -e CONFIG_OVERLAY_FS
+        make O=out olddefconfig CC=clang
         
-        # 3. 开始多线程编译
+        # 多线程编译
         make -j$(nproc --all) O=out \
           CC=clang \
           CLANG_TRIPLE=aarch64-linux-gnu- \
@@ -124,22 +102,9 @@ jobs:
         cd AnyKernel3
         zip -r9 $GITHUB_WORKSPACE/KernelSU-Next-whyred.zip * -x .git README.md *placeholder
 
-    - name: 替换并生成最终的 boot.img (Fastboot 刷入)
-      run: |
-        cd $GITHUB_WORKSPACE
-        
-        if [ -f "$GITHUB_WORKSPACE/boot.img" ]; then
-          cp "$GITHUB_WORKSPACE/boot.img" "$GITHUB_WORKSPACE/boot-ksu.img"
-          abootimg -u "$GITHUB_WORKSPACE/boot-ksu.img" -k "$GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/Image.gz-dtb"
-          echo "boot-ksu.img 打包完成"
-        else
-          echo "提示：仓库根目录未上传官方 boot.img，请直接使用 AnyKernel3 zip 刷机包"
-        fi
-
     - name: 上传构建产物
       uses: actions/upload-artifact@v4
       with:
         name: whyred-KernelSU-Next-Output
         path: |
           KernelSU-Next-whyred.zip
-          boot-ksu.img
