@@ -48,7 +48,7 @@ jobs:
         if [ -f "drivers/gpu/msm/kgsl_trace.h" ]; then
           sed -i 's|#include "./kgsl_trace.h"|#include "kgsl_trace.h"|g' drivers/gpu/msm/kgsl_trace.h
           sed -i 's|#include "./drivers/gpu/msm/kgsl_trace.h"|#include "kgsl_trace.h"|g' drivers/gpu/msm/kgsl_trace.h
-          sed -i 's|#define TRACE_INCLUDE_PATH .|#define TRACE_INCLUDE_PATH drivers/gpu/msm|g' drivers/gpu/msm/kgsl_trace.h
+          sed -i 's|#define TRACE_INCLUDE_PATH .*|#define TRACE_INCLUDE_PATH drivers/gpu/msm|g' drivers/gpu/msm/kgsl_trace.h
         fi
         
         # 4. 写入 defconfig 基础配置
@@ -58,7 +58,7 @@ jobs:
         echo "CONFIG_KSU=y" >> $DEFCONFIG
         echo "CONFIG_OVERLAY_FS=y" >> $DEFCONFIG
 
-    - name: 原位编译内核 (单线程精准排错模式)
+    - name: 原位编译内核 (单线程排错防混淆模式)
       run: |
         cd $GITHUB_WORKSPACE/kernel
         
@@ -80,7 +80,7 @@ jobs:
         scripts/config --file .config -e CONFIG_KSU -e CONFIG_OVERLAY_FS
         make olddefconfig CC=clang
         
-        # 4. 临时使用单线程 -j1 运行，确保最后的错误能清晰展示
+        # 4. 使用单线程模式排错 (-j1) 确保最后错误清晰
         make -j1 \
           CC=clang \
           CLANG_TRIPLE=aarch64-linux-gnu- \
