@@ -18,8 +18,8 @@ jobs:
 
       - name: 拉取内核源码与编译器
         run: |
-          # 拉取小米官方 Android Pie (whyred) 内核源码
-          git clone --depth=1 https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git -b whyred-p-oss kernel-source
+          # whyred 的 Android Pie 内核分支在官方仓库中归在 wayne-p-oss (共用平台源码)
+          git clone --depth=1 https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git -b wayne-p-oss kernel-source
           
           # 拉取兼容 Android 9 的 Google 官方 GCC 4.9 交叉编译器
           git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 toolchain-aarch64
