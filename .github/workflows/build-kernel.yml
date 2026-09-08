@@ -5,7 +5,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
       - name: 检出构建仓库
         uses: actions/checkout@v4
@@ -13,12 +13,12 @@ jobs:
       - name: 安装交叉编译依赖
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libncurses5-dev bzip2 libssl-dev bc \
-            flex bison libelf-dev zip git ccache
+          sudo apt-get install -y build-essential libncurses5 libncurses5-dev bzip2 \
+            libssl-dev bc flex bison libelf-dev zip git ccache libtinfo5
 
       - name: 拉取内核源码与编译器
         run: |
-          # 拉取小米官方 Android Pie 内核源码分支
+          # 拉取小米官方 Android Pie (whyred) 内核源码
           git clone --depth=1 https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git -b whyred-p-oss kernel-source
           
           # 拉取兼容 Android 9 的 Google 官方 GCC 4.9 交叉编译器
@@ -29,11 +29,10 @@ jobs:
         run: |
           cd kernel-source
           
-          # 拉取 KernelSU-Next
+          # 拉取 KernelSU-Next 源码
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next
           
-          # 检查并修复 4.4 内核缺失符号 (Backport)
-          # KernelSU-Next 需要内核支持 kprobes
+          # 开启内核 kprobes 与 KSU 支持
           sed -i 's/# CONFIG_KPROBES is not set/CONFIG_KPROBES=y/' arch/arm64/configs/whyred-perf_defconfig
           sed -i 's/# CONFIG_HAVE_KPROBES is not set/CONFIG_HAVE_KPROBES=y/' arch/arm64/configs/whyred-perf_defconfig
           sed -i 's/# CONFIG_KPROBE_EVENTS is not set/CONFIG_KPROBE_EVENTS=y/' arch/arm64/configs/whyred-perf_defconfig
@@ -55,12 +54,12 @@ jobs:
         run: |
           git clone https://github.com/osm0sis/AnyKernel3.git
           cd AnyKernel3
-          # 针对 whyred 配置 AnyKernel
+          # 适配 whyred 分区配置
           sed -i 's/device.name1=.*/device.name1=whyred/' anykernel.sh
           sed -i 's/block=.*/block=\/dev\/block\/bootdevice\/by-name\/boot/' anykernel.sh
           sed -i 's/is_slot_device=1;/is_slot_device=0;/' anykernel.sh
           
-          # 复制生成的 Image.gz-dtb
+          # 复制生成的内核文件
           cp ../kernel-source/out/arch/arm64/boot/Image.gz-dtb .
           zip -r9 ../KernelSU-Next-whyred-V12.0.2.0.zip * -x .git README.md
 
