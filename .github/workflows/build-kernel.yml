@@ -1,16 +1,18 @@
-name: Build Whyred Kernel with KernelSU-Next & Repack Boot
+name: Build KernelSU for Redmi Note 5 (whyred)
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
+  # 统一强制在 ubuntu-22.04 运行
     runs-on: ubuntu-22.04
+
     steps:
       - name: 检出构建仓库
         uses: actions/checkout@v4
 
-      - name: 检查底包压缩包是否存在
+      - name: 检查 stock_boot.zip 是否存在
         run: |
           if [ ! -f "stock_boot.zip" ]; then
             echo "::error::未在仓库根目录找到 stock_boot.zip！请将底包压缩后命名为 stock_boot.zip 并上传到仓库根目录。"
@@ -24,35 +26,32 @@ jobs:
             libncurses5 libncurses5-dev bzip2 libssl-dev bc flex bison libelf-dev zip unzip git ccache \
             libtinfo5 wget tar curl
 
-      - name: 下载并解压内核源码
+      - name: 下载并解压内核源码 (MoKee 4.4 分支)
         run: |
           curl -L "https://github.com/MoKee/android_kernel_xiaomi_whyred/archive/refs/heads/mko-mr1.tar.gz" -o kernel.tar.gz
           tar -xzf kernel.tar.gz
           mv android_kernel_xiaomi_whyred-mko-mr1 kernel-source
 
-      - name: 集成 KernelSU-Next 与兼容性补丁
+      - name: 集成经典版 KernelSU v0.9.5 与配置项
         run: |
           cd kernel-source
-
-          # 注入 KernelSU-Next（拉取官方默认分支）
-          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -
-
-          # 配置 kprobes 与 KSU
+          
+          # 注入经典版 KernelSU 并指定 v0.9.5 标签
+          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s v0.9.5
+          
+          # 针对 whyred-perf_defconfig 配置 KSU 与 kprobes
           DEFCONFIG="arch/arm64/configs/whyred-perf_defconfig"
-          sed -i 's/# CONFIG_KPROBES is not set/CONFIG_KPROBES=y/' $DEFCONFIG
-          sed -i 's/# CONFIG_HAVE_KPROBES is not set/CONFIG_HAVE_KPROBES=y/' $DEFCONFIG
-          sed -i 's/# CONFIG_KPROBE_EVENTS is not set/CONFIG_KPROBE_EVENTS=y/' $DEFCONFIG
+          sed -i 's/# CONFIG_KPROBES is not set/CONFIG_KPROBES=y/' $DEFCONFIG || true
+          sed -i 's/# CONFIG_HAVE_KPROBES is not set/CONFIG_HAVE_KPROBES=y/' $DEFCONFIG || true
+          sed -i 's/# CONFIG_KPROBE_EVENTS is not set/CONFIG_KPROBE_EVENTS=y/' $DEFCONFIG || true
           echo "CONFIG_KSU=y" >> $DEFCONFIG
 
-          # 修复 GCC 11 编译 scripts/dtc 时的 yylloc 重复定义问题
+          # 修复 GCC 11 编译 scripts/dtc 兼容性问题
           sed -i 's/YYLTYPE yylloc;/extern YYLTYPE yylloc;/' scripts/dtc/dtc-lexer.l || true
-          sed -i 's/YYLTYPE yylloc;/extern YYLTYPE yylloc;/' scripts/dtc/dtc-lexer.lex.c_shipped || true
-          sed -i 's/YYLTYPE yylloc;/extern YYLTYPE yylloc;/' scripts/dtc/dtc-lexer.lex.c || true
 
       - name: 编译内核
         run: |
           cd kernel-source
-
           export ARCH=arm64
           export SUBARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
@@ -69,7 +68,6 @@ jobs:
 
       - name: 使用 magiskboot 解包底包并重新打包 boot.img
         run: |
-          # 验证编译产物
           KERNEL_PATH="kernel-source/out/arch/arm64/boot/Image.gz-dtb"
           if [ ! -f "$KERNEL_PATH" ]; then
             KERNEL_PATH="kernel-source/out/arch/arm64/boot/Image.gz"
@@ -80,20 +78,18 @@ jobs:
             exit 1
           fi
 
-          # 创建独立解包/重打包目录
           mkdir -p repack_workspace
           cd repack_workspace
 
-          # 从官方 Magisk Release 提取 x86_64 平台的 magiskboot 二进制
+          # 提取 magiskboot
           curl -sL "https://github.com/topjohnwu/Magisk/releases/download/v27.0/Magisk-v27.0.apk" -o magisk.zip
           unzip -p magisk.zip "lib/x86_64/libmagiskboot.so" > magiskboot
           chmod +x magiskboot
           rm -f magisk.zip
 
-          # 解压上传的底包 zip
+          # 解压底包
           unzip -o ../stock_boot.zip -d ./
 
-          # 匹配解压出的 boot 镜像
           if [ -f "stock_boot.img" ]; then
             mv stock_boot.img stock.img
           elif [ -f "boot.img" ]; then
@@ -108,25 +104,21 @@ jobs:
             fi
           fi
 
-          # 解包底包镜像（会提取出 kernel, ramdisk.cpio 等）
+          # 解包、替换内核、重新打包
           ./magiskboot unpack stock.img
-
-          # 替换内核为刚刚编译生成的文件
           cp ../$KERNEL_PATH ./kernel
-
-          # 重新组装（默认生成 new-boot.img）
           ./magiskboot repack stock.img
+
           if [ ! -f "new-boot.img" ]; then
             echo "::error::magiskboot 打包失败，未生成 new-boot.img"
             exit 1
           fi
 
-          # 整理产物
           mkdir -p ../output
           mv new-boot.img ../output/boot.img
 
       - name: 上传 boot.img 产物
         uses: actions/upload-artifact@v4
         with:
-          name: whyred-KernelSU-Next-boot
+          name: whyred-KernelSU-v0.9.5-boot
           path: output/boot.img
