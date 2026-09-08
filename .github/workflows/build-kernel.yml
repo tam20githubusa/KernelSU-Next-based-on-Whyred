@@ -14,25 +14,27 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential libncurses5 libncurses5-dev bzip2 \
-            libssl-dev bc flex bison libelf-dev zip git ccache libtinfo5
+            libssl-dev bc flex bison libelf-dev zip git ccache libtinfo5 wget tar curl
 
       - name: 拉取内核源码与编译器
         run: |
-          # 拉取完全公开、专为 whyred 兼容 MIUI 12 / Pie 的开源内核树 (分支 pie)
-          git clone --depth=1 https://github.com/Whyred-Development/android_kernel_xiaomi_whyred.git -b pie kernel-source
+          # 从 MoKee 官方公开仓库直接下载 whyred Android 9 (Pie) 完整内核归档包并解压
+          curl -L "https://github.com/MoKee/android_kernel_xiaomi_whyred/archive/refs/heads/mko-mr1.tar.gz" -o kernel.tar.gz
+          tar -xzf kernel.tar.gz
+          mv android_kernel_xiaomi_whyred-mko-mr1 kernel-source
           
           # 拉取兼容 Android 9 的 Google 官方 GCC 4.9 交叉编译器
           git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 toolchain-aarch64
           git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 toolchain-arm
 
-      - name: 集成 KernelSU-Next 与 4.4 内核补丁
+      - name: 集成 KernelSU-Next 与内核配置
         run: |
           cd kernel-source
           
-          # 注入 KernelSU-Next 源码
+          # 注入 KernelSU-Next
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next
           
-          # 开启内核 kprobes 与 KSU 支持
+          # 开启内核 kprobes 与 KSU 支持 (该源码树配置文件为 whyred-perf_defconfig)
           DEFCONFIG="arch/arm64/configs/whyred-perf_defconfig"
           sed -i 's/# CONFIG_KPROBES is not set/CONFIG_KPROBES=y/' $DEFCONFIG
           sed -i 's/# CONFIG_HAVE_KPROBES is not set/CONFIG_HAVE_KPROBES=y/' $DEFCONFIG
@@ -55,12 +57,12 @@ jobs:
         run: |
           git clone https://github.com/osm0sis/AnyKernel3.git
           cd AnyKernel3
-          # 适配 whyred 分区与启动格式
+          # 适配 whyred 分区与引导格式
           sed -i 's/device.name1=.*/device.name1=whyred/' anykernel.sh
           sed -i 's/block=.*/block=\/dev\/block\/bootdevice\/by-name\/boot/' anykernel.sh
           sed -i 's/is_slot_device=1;/is_slot_device=0;/' anykernel.sh
           
-          # 复制生成的 Image.gz-dtb
+          # 提取 Image.gz-dtb
           cp ../kernel-source/out/arch/arm64/boot/Image.gz-dtb .
           zip -r9 ../KernelSU-Next-whyred-V12.0.2.0.zip * -x .git README.md
 
