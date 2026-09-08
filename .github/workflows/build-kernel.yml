@@ -84,20 +84,21 @@ jobs:
           mkdir -p repack_workspace
           cd repack_workspace
 
-          # 获取 Linux 预编译版 magiskboot
-          curl -sL "https://raw.githubusercontent.com/tiann/KernelSU/main/userspace/ksud/bin/magiskboot" -o magiskboot
+          # 从官方 Magisk Release 提取 x86_64 平台的 magiskboot 二进制
+          curl -sL "https://github.com/topjohnwu/Magisk/releases/download/v27.0/Magisk-v27.0.apk" -o magisk.zip
+          unzip -p magisk.zip "lib/x86_64/libmagiskboot.so" > magiskboot
           chmod +x magiskboot
+          rm -f magisk.zip
 
-          # 解压 stock_boot.zip
+          # 解压上传的底包 zip
           unzip -o ../stock_boot.zip -d ./
 
-          # 自动匹配内部解压出的 img 文件名并统一定义为 stock.img
+          # 匹配解压出的 boot 镜像
           if [ -f "stock_boot.img" ]; then
             mv stock_boot.img stock.img
           elif [ -f "boot.img" ]; then
             mv boot.img stock.img
           else
-            # 兼容任意名称的单个 img
             IMG_FILE=$(find . -maxdepth 1 -name "*.img" | head -n 1)
             if [ -n "$IMG_FILE" ]; then
               mv "$IMG_FILE" stock.img
@@ -107,18 +108,22 @@ jobs:
             fi
           fi
 
-          # 解包底包镜像
+          # 解包底包镜像（会提取出 kernel, ramdisk.cpio 等）
           ./magiskboot unpack stock.img
 
-          # 用新编译的内核替换解包出的 kernel
+          # 替换内核为刚刚编译生成的文件
           cp ../$KERNEL_PATH ./kernel
 
-          # 重新组装生成 boot.img
-          ./magiskboot repack stock.img boot.img
+          # 重新组装（默认生成 new-boot.img）
+          ./magiskboot repack stock.img
+          if [ ! -f "new-boot.img" ]; then
+            echo "::error::magiskboot 打包失败，未生成 new-boot.img"
+            exit 1
+          fi
 
-          # 移动打包完成的镜像至输出目录
+          # 整理产物
           mkdir -p ../output
-          mv boot.img ../output/boot.img
+          mv new-boot.img ../output/boot.img
 
       - name: 上传 boot.img 产物
         uses: actions/upload-artifact@v4
