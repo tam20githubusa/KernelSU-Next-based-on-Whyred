@@ -1,4 +1,4 @@
-name: Build Whyred Kernel with KernelSU-Next
+name: Build Whyred Kernel with KernelSU-Next & Repack Boot
 
 on:
   workflow_dispatch:
@@ -9,6 +9,13 @@ jobs:
     steps:
       - name: 检出构建仓库
         uses: actions/checkout@v4
+
+      - name: 检查底包镜像是否存在
+        run: |
+          if [ ! -f "stock_boot.img" ]; then
+            echo "::error::未在仓库根目录找到 stock_boot.img！请先从当前 ROM 提取官方 boot.img 重命名为 stock_boot.img 并上传到仓库。"
+            exit 1
+          fi
 
       - name: 安装交叉编译依赖
         run: |
@@ -27,7 +34,7 @@ jobs:
         run: |
           cd kernel-source
 
-          # 注入 KernelSU-Next（不加无效分支参数，拉取官方推荐默认分支）
+          # 注入 KernelSU-Next（拉取官方默认分支）
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -
 
           # 配置 kprobes 与 KSU
@@ -53,24 +60,50 @@ jobs:
 
           make O=out whyred-perf_defconfig
 
-          # KCFLAGS="-Wno-error" 忽略 GCC 11 对 4.4 旧内核的警告拦截
+          # 编译内核并忽略非致命告警
           make O=out \
             HOSTCFLAGS="-fcommon" \
             HOSTCXXFLAGS="-fcommon" \
             KCFLAGS="-Wno-error" \
             -j$(nproc --all)
 
-      - name: 检查并整理产物
+      - name: 使用 magiskboot 打包生成 boot.img
         run: |
-          mkdir -p output
-          if [ -f kernel-source/out/arch/arm64/boot/Image.gz-dtb ]; then
-            cp kernel-source/out/arch/arm64/boot/Image.gz-dtb output/
-          elif [ -f kernel-source/out/arch/arm64/boot/Image.gz ]; then
-            cp kernel-source/out/arch/arm64/boot/Image.gz output/
+          # 验证内核产物
+          KERNEL_PATH="kernel-source/out/arch/arm64/boot/Image.gz-dtb"
+          if [ ! -f "$KERNEL_PATH" ]; then
+            KERNEL_PATH="kernel-source/out/arch/arm64/boot/Image.gz"
+          fi
+          
+          if [ ! -f "$KERNEL_PATH" ]; then
+            echo "::error::未找到编译出的内核镜像！"
+            exit 1
           fi
 
-      - name: 上传内核产物
+          # 创建独立打包工作目录
+          mkdir -p repack_workspace
+          cd repack_workspace
+
+          # 获取 Linux 平台预编译版 magiskboot
+          curl -sL "https://raw.githubusercontent.com/tiann/KernelSU/main/userspace/ksud/bin/magiskboot" -o magiskboot
+          chmod +x magiskboot
+
+          # 复制仓库根目录的 stock_boot.img 并解包
+          cp ../stock_boot.img ./stock_boot.img
+          ./magiskboot unpack stock_boot.img
+
+          # 用新编译的内核替换解出来的原始 kernel
+          cp ../$KERNEL_PATH ./kernel
+
+          # 重新打包成 new-boot.img
+          ./magiskboot repack stock_boot.img boot.img
+
+          # 整理输出
+          mkdir -p ../output
+          mv boot.img ../output/boot.img
+
+      - name: 上传 boot.img 产物
         uses: actions/upload-artifact@v4
         with:
-          name: whyred-KernelSU-Next-Kernel
-          path: output/*
+          name: whyred-KernelSU-Next-boot
+          path: output/boot.img
