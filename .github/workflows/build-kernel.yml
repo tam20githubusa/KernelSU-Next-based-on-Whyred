@@ -10,18 +10,18 @@ jobs:
       - name: 检出构建仓库
         uses: actions/checkout@v4
 
-      - name: 检查底包镜像是否存在
+      - name: 检查底包压缩包是否存在
         run: |
-          if [ ! -f "stock_boot.img" ]; then
-            echo "::error::未在仓库根目录找到 stock_boot.img！请先从当前 ROM 提取官方 boot.img 重命名为 stock_boot.img 并上传到仓库。"
+          if [ ! -f "stock_boot.zip" ]; then
+            echo "::error::未在仓库根目录找到 stock_boot.zip！请将底包压缩后命名为 stock_boot.zip 并上传到仓库根目录。"
             exit 1
           fi
 
-      - name: 安装交叉编译依赖
+      - name: 安装交叉编译与解包依赖
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
-            libncurses5 libncurses5-dev bzip2 libssl-dev bc flex bison libelf-dev zip git ccache \
+            libncurses5 libncurses5-dev bzip2 libssl-dev bc flex bison libelf-dev zip unzip git ccache \
             libtinfo5 wget tar curl
 
       - name: 下载并解压内核源码
@@ -67,38 +67,56 @@ jobs:
             KCFLAGS="-Wno-error" \
             -j$(nproc --all)
 
-      - name: 使用 magiskboot 打包生成 boot.img
+      - name: 使用 magiskboot 解包底包并重新打包 boot.img
         run: |
-          # 验证内核产物
+          # 验证编译产物
           KERNEL_PATH="kernel-source/out/arch/arm64/boot/Image.gz-dtb"
           if [ ! -f "$KERNEL_PATH" ]; then
             KERNEL_PATH="kernel-source/out/arch/arm64/boot/Image.gz"
           fi
-          
+
           if [ ! -f "$KERNEL_PATH" ]; then
-            echo "::error::未找到编译出的内核镜像！"
+            echo "::error::未找到编译出的内核镜像文件！"
             exit 1
           fi
 
-          # 创建独立打包工作目录
+          # 创建独立解包/重打包目录
           mkdir -p repack_workspace
           cd repack_workspace
 
-          # 获取 Linux 平台预编译版 magiskboot
+          # 获取 Linux 预编译版 magiskboot
           curl -sL "https://raw.githubusercontent.com/tiann/KernelSU/main/userspace/ksud/bin/magiskboot" -o magiskboot
           chmod +x magiskboot
 
-          # 复制仓库根目录的 stock_boot.img 并解包
-          cp ../stock_boot.img ./stock_boot.img
-          ./magiskboot unpack stock_boot.img
+          # 解压 stock_boot.zip
+          unzip -o ../stock_boot.zip -d ./
 
-          # 用新编译的内核替换解出来的原始 kernel
+          # 自动匹配内部解压出的 img 文件名并统一定义为 stock.img
+          if [ -f "stock_boot.img" ]; then
+            mv stock_boot.img stock.img
+          elif [ -f "boot.img" ]; then
+            mv boot.img stock.img
+          else
+            # 兼容任意名称的单个 img
+            IMG_FILE=$(find . -maxdepth 1 -name "*.img" | head -n 1)
+            if [ -n "$IMG_FILE" ]; then
+              mv "$IMG_FILE" stock.img
+            else
+              echo "::error::在 stock_boot.zip 中未找到任何 .img 格式的镜像！"
+              exit 1
+            fi
+          fi
+
+          # 解包底包镜像
+          ./magiskboot unpack stock.img
+
+          # 用新编译的内核替换解包出的 kernel
           cp ../$KERNEL_PATH ./kernel
 
-          # 重新打包成 new-boot.img
-          ./magiskboot repack stock_boot.img boot.img
+          # 重新组装生成 boot.img
+          ./magiskboot repack stock.img boot.img
 
-          # 整理输出
+          # 移动打包完成的镜像至输出目录
           mkdir -p ../output
           mv boot.img ../output/boot.img
 
