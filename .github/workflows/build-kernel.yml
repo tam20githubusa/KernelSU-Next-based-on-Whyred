@@ -1,4 +1,4 @@
-name: Build KernelSU-Next for whyred
+name: Build Whyred Kernel with KernelSU-Next
 
 on:
   workflow_dispatch:
@@ -19,7 +19,6 @@ jobs:
 
       - name: 下载并解压内核源码
         run: |
-          # 从 MoKee 官方公开仓库下载 whyred 源码树
           curl -L "https://github.com/MoKee/android_kernel_xiaomi_whyred/archive/refs/heads/mko-mr1.tar.gz" -o kernel.tar.gz
           tar -xzf kernel.tar.gz
           mv android_kernel_xiaomi_whyred-mko-mr1 kernel-source
@@ -27,18 +26,18 @@ jobs:
       - name: 集成 KernelSU-Next 与兼容性补丁
         run: |
           cd kernel-source
-          
-          # 注入 KernelSU-Next
-          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next
-          
-          # 开启内核 kprobes 与 KSU 支持
+
+          # 注入 KernelSU-Next（不加无效分支参数，拉取官方推荐默认分支）
+          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -
+
+          # 配置 kprobes 与 KSU
           DEFCONFIG="arch/arm64/configs/whyred-perf_defconfig"
           sed -i 's/# CONFIG_KPROBES is not set/CONFIG_KPROBES=y/' $DEFCONFIG
           sed -i 's/# CONFIG_HAVE_KPROBES is not set/CONFIG_HAVE_KPROBES=y/' $DEFCONFIG
           sed -i 's/# CONFIG_KPROBE_EVENTS is not set/CONFIG_KPROBE_EVENTS=y/' $DEFCONFIG
           echo "CONFIG_KSU=y" >> $DEFCONFIG
 
-          # 修复 GCC 11 链接 scripts/dtc 报 yylloc multiple definition 的问题
+          # 修复 GCC 11 编译 scripts/dtc 时的 yylloc 重复定义问题
           sed -i 's/YYLTYPE yylloc;/extern YYLTYPE yylloc;/' scripts/dtc/dtc-lexer.l || true
           sed -i 's/YYLTYPE yylloc;/extern YYLTYPE yylloc;/' scripts/dtc/dtc-lexer.lex.c_shipped || true
           sed -i 's/YYLTYPE yylloc;/extern YYLTYPE yylloc;/' scripts/dtc/dtc-lexer.lex.c || true
@@ -46,32 +45,32 @@ jobs:
       - name: 编译内核
         run: |
           cd kernel-source
-          
+
           export ARCH=arm64
           export SUBARCH=arm64
-          # 使用 Ubuntu 原生提供的标准 aarch64 交叉编译器
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
           make O=out whyred-perf_defconfig
-          # 传递 HOSTCFLAGS 允许常见符号合并
-          make O=out HOSTCFLAGS="-fcommon" HOSTCXXFLAGS="-fcommon" -j$(nproc --all)
 
-      - name: 打包 AnyKernel3 刷机包
+          # KCFLAGS="-Wno-error" 忽略 GCC 11 对 4.4 旧内核的警告拦截
+          make O=out \
+            HOSTCFLAGS="-fcommon" \
+            HOSTCXXFLAGS="-fcommon" \
+            KCFLAGS="-Wno-error" \
+            -j$(nproc --all)
+
+      - name: 检查并整理产物
         run: |
-          git clone https://github.com/osm0sis/AnyKernel3.git
-          cd AnyKernel3
-          # 适配 whyred 分区与引导格式
-          sed -i 's/device.name1=.*/device.name1=whyred/' anykernel.sh
-          sed -i 's/block=.*/block=\/dev\/block\/bootdevice\/by-name\/boot/' anykernel.sh
-          sed -i 's/is_slot_device=1;/is_slot_device=0;/' anykernel.sh
-          
-          # 提取 Image.gz-dtb
-          cp ../kernel-source/out/arch/arm64/boot/Image.gz-dtb .
-          zip -r9 ../KernelSU-Next-whyred-V12.0.2.0.zip * -x .git README.md
+          mkdir -p output
+          if [ -f kernel-source/out/arch/arm64/boot/Image.gz-dtb ]; then
+            cp kernel-source/out/arch/arm64/boot/Image.gz-dtb output/
+          elif [ -f kernel-source/out/arch/arm64/boot/Image.gz ]; then
+            cp kernel-source/out/arch/arm64/boot/Image.gz output/
+          fi
 
-      - name: 上传构建产物
+      - name: 上传内核产物
         uses: actions/upload-artifact@v4
         with:
-          name: KernelSU-Next-whyred
-          path: KernelSU-Next-whyred-V12.0.2.0.zip
+          name: whyred-KernelSU-Next-Kernel
+          path: output/*
