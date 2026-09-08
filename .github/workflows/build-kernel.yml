@@ -18,7 +18,7 @@ jobs:
 
       - name: 拉取内核源码与编译器
         run: |
-          # 从 MoKee 官方公开仓库直接下载 whyred Android 9 (Pie) 完整内核归档包并解压
+          # 下载 whyred Android 9 (Pie) 完整内核归档包并解压
           curl -L "https://github.com/MoKee/android_kernel_xiaomi_whyred/archive/refs/heads/mko-mr1.tar.gz" -o kernel.tar.gz
           tar -xzf kernel.tar.gz
           mv android_kernel_xiaomi_whyred-mko-mr1 kernel-source
@@ -34,17 +34,26 @@ jobs:
           # 注入 KernelSU-Next
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next
           
-          # 开启内核 kprobes 与 KSU 支持 (该源码树配置文件为 whyred-perf_defconfig)
+          # 开启内核 kprobes 与 KSU 支持
           DEFCONFIG="arch/arm64/configs/whyred-perf_defconfig"
           sed -i 's/# CONFIG_KPROBES is not set/CONFIG_KPROBES=y/' $DEFCONFIG
           sed -i 's/# CONFIG_HAVE_KPROBES is not set/CONFIG_HAVE_KPROBES=y/' $DEFCONFIG
           sed -i 's/# CONFIG_KPROBE_EVENTS is not set/CONFIG_KPROBE_EVENTS=y/' $DEFCONFIG
           echo "CONFIG_KSU=y" >> $DEFCONFIG
 
+          # 修复 GCC 11 编译 4.4 内核 scripts/dtc 时的 yylloc 重复定义错误 (-fcommon)
+          sed -i 's/HOSTCFLAGS   := -Wall -Wmissing-prototypes -Wstrict-prototypes/HOSTCFLAGS   := -Wall -Wmissing-prototypes -Wstrict-prototypes -fcommon/' Makefile
+          sed -i 's/HOSTCFLAGS :=/HOSTCFLAGS := -fcommon /' scripts/Makefile.host
+
       - name: 编译内核
         run: |
           cd kernel-source
-          export PATH=$(pwd)/../toolchain-aarch64/bin:$(pwd)/../toolchain-arm/bin:$PATH
+          
+          # 使用绝对路径注入 PATH，防止 make 进入子目录时路径丢失
+          TOOLCHAIN_AARCH64_BIN="$(pwd)/../toolchain-aarch64/bin"
+          TOOLCHAIN_ARM_BIN="$(pwd)/../toolchain-arm/bin"
+          export PATH="${TOOLCHAIN_AARCH64_BIN}:${TOOLCHAIN_ARM_BIN}:$PATH"
+          
           export ARCH=arm64
           export SUBARCH=arm64
           export CROSS_COMPILE=aarch64-linux-android-
